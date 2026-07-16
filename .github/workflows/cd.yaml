@@ -33,7 +33,7 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: setup Terraform
-        uses: hashicorp/setup-transform@v3
+        uses: hashicorp/setup-terraform@v3
 
       - name: Terraform init
         working-directory: terraform
