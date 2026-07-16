@@ -1,0 +1,59 @@
+name: CD
+
+on:
+  push:
+    branches: [devel, stage]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name}}
+    env:
+      TF_ENV: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: install & build
+        run: |
+          npm install
+          npm run build
+          
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DELOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: setup Terraform
+        uses: hashicorp/setup-transform@v3
+
+      - name: Terraform init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}"
+
+      - name: Select workspace
+        working-directory: terraform
+        run: terraform workspace select "$TF_ENV" || terraform workspace new "$TF_ENV"
+
+      - name: Terraform apply
+        working-directory: terraform
+        run: terraform apply -auto-approve
+
+      - name: publish to s3 & invalidate
+        working-directory: terraform
+        run: |
+          BUCKRT=$(terraform output - raw site_bucket_name)
+          DIST=$(terraform putput - raw cloudfront_distribution_id)
+          aws s3 sync "$GITHUB_WORKSPACE/build/" "s3://$BUCKET/" --delete
+          aws cloudfront create-invalidation --distribution-id "$DIST" --paths "/*"
